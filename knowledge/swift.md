@@ -168,3 +168,7 @@ for (airportCode, airportName) in airports {
 for airportCode in airports.keys {
 
 for airportName in airports.values {
+
+
+
+if #available(iOS 10, macOS 10.12, *) {
