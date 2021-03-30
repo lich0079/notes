@@ -37,3 +37,11 @@ markword的cas 操作  https://github.com/openjdk/jdk/blob/1fc67ab002225b1096a4d
 https://github.com/openjdk/jdk/blob/5e9d3fdc9ccfba6b51e340f31030905238703764/src/hotspot/share/runtime/biasedLocking.cpp
 
 ```
+
+## 锁优化
+
+ * 减少锁持有时间
+ * 锁粒度
+ * 读写分离
+ * 锁消除 （编译）
+

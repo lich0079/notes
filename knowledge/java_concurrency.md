@@ -1,6 +1,8 @@
 
 
-MESI
+MESI    Modified  Exclusive  Shared  Invalid
+
+
 
 cache line size 64B
 
