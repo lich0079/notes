@@ -5,9 +5,9 @@
 | Push/pull | Push(prefetch limit),Pull(one message at a time)  | Pull  | Pull | 4  | Pull |
 | Order | No in competing consumers, resolved by using the Consistent Hashing Exchange  | 2  | 3  | 4  | No  |
 | Once | at most once, at least once  | 2  | 3  | 4  | At least Once |
-| Transaction | 1  | 2  | 3  | 4  | 5  |
+| Transaction | 1  | 2  | 3  | 4  | PL/SQL  |
 | Volume | 1  | 2  | 3  | 4  | 5  |
-| Program language | 1  | 2  | 3  | 4  | 5  |
+| Program language | Erlang  | JAVA  | Scala  | 4  | JAVA  |
 | Availability | 1  | 2  | 3  | 4  | 5  |
 | Robust | 1  | 2  | 3  | 4  | 5  |
 | Filter | Server side  | 2  | Client side  | 4  | Client side  |
