@@ -14,7 +14,21 @@ Disruptor版本 [3.4.3](https://github.com/LMAX-Exchange/disruptor/tree/3.4.3)
 
 &nbsp;
 
-## RingBuffer
+
+1. [RingBuffer](#RingBuffer)
+	* 1.1. [EventFactory<E>](#EventFactoryE)
+2. [Sequence](#Sequence)
+3. [Sequencer](#Sequencer)
+	* 3.1. [SingleProducerSequencer](#SingleProducerSequencer)
+	* 3.2. [MultiProducerSequencer](#MultiProducerSequencer)
+4. [EventProcessor](#EventProcessor)
+	* 4.1. [BatchEventProcessor<T>](#BatchEventProcessorT)
+		* 4.1.1. [SequenceBarrier](#SequenceBarrier)
+		* 4.1.2. [WaitStrategy](#WaitStrategy)
+5. [WorkerPool](#WorkerPool)
+	* 5.1. [WorkProcessor](#WorkProcessor)
+    
+##  1. <a name='RingBuffer'></a>RingBuffer
 
 Disruptor 框架中的核心数据结构，event的容器。内部实现是
 
@@ -59,14 +73,14 @@ sequence   cursor
 
 
 &nbsp;
-### EventFactory<E>
+###  1.1. <a name='EventFactoryE'></a>EventFactory<E>
 
 EventFactory 是一次性使用的类，在最开始的时候用来给RingBuffer预填充数据。
 
 为了避免JAVA GC带来的性能影响，Disruptor采用的设计是在数组上预填充好对象，每次publish event的时候，只是通过RingBuffer.get(seq)拿到对象，更新对象的值，然后就发布出去了。整个生产消费过程中再也不会有event对象的创建和销毁。
 
 &nbsp;
-## Sequence
+##  2. <a name='Sequence'></a>Sequence
 
 用来表达event序例号的对象，但这里为什么不直接用long呢 ？
 
@@ -89,7 +103,7 @@ volatile long value;
 ***比如在对EventProcessor.sequence的更新中都是用的order writes，不保证立即可见，但速度快很多。在这个场景里，造成的结果是显示的消费进度可能比实际上慢，导致生产者有可能在可以生产的情况下没有去生产。但生产者看的是多个消费者中最慢的那个消费进度，所以影响可能没有那么大。***
 
 &nbsp;
-## Sequencer
+##  3. <a name='Sequencer'></a>Sequencer
 
 Sequencer是Disruptor框架的核心类。
 
@@ -99,7 +113,7 @@ Sequencer是Disruptor框架的核心类。
 
 &nbsp;
 
-### SingleProducerSequencer
+###  3.1. <a name='SingleProducerSequencer'></a>SingleProducerSequencer
 
 生产者每次通过Sequencer.next(n) 来预定下面n个可以写入的数据位，然后修改数据，发布event。
 
@@ -150,7 +164,7 @@ while (wrapPoint > (minSequence = Util.getMinimumSequence(gatingSequences, nextV
 
 &nbsp;
 
-### MultiProducerSequencer
+###  3.2. <a name='MultiProducerSequencer'></a>MultiProducerSequencer
 
 MultiProducerSequencer 是在多个生产者的场合使用的，多个生产者的情况下存在竞争，导致它的实现更加复杂。
 
@@ -270,14 +284,14 @@ public long getHighestPublishedSequence(long lowerBound, long availableSequence)
 说完了生产者，下面来看看消费者
 
 &nbsp;
-## EventProcessor
+##  4. <a name='EventProcessor'></a>EventProcessor
 
 EventProcessor extends Runnable, 可以理解它是一个消费者线程。
 
 EventProcessor 本身也只是个interface。
 
 &nbsp;
-### BatchEventProcessor<T>
+###  4.1. <a name='BatchEventProcessorT'></a>BatchEventProcessor<T>
 
 主要属性有
 ```
@@ -289,7 +303,7 @@ Sequence sequence = new Sequence(-1);      // 该消费线程消费完的sequenc
 
 &nbsp;
 
-#### SequenceBarrier
+####  4.1.1. <a name='SequenceBarrier'></a>SequenceBarrier
 
 ProcessingSequenceBarrier 内部持有Sequencer的cursor引用，知道生产者生产到哪个位置了。BatchEventProcessor.sequence 是当前消费线程消费到的位置。sequence + 1 就是下一个打算消费的位置 nextSequence，sequenceBarrier.waitFor(nextSequence) 会去获取下一个可以消费的availableSequence。
 
@@ -297,7 +311,7 @@ ProcessingSequenceBarrier 内部持有Sequencer的cursor引用，知道生产者
 
 &nbsp;
 
-#### WaitStrategy
+####  4.1.2. <a name='WaitStrategy'></a>WaitStrategy
 
 调用 sequenceBarrier.waitFor(nextSequence) 时可能不会立即有新的event，这时的行为由 waitStrategy 决定，有多种实现，比如 BlockingWaitStrategy。 
 
@@ -335,7 +349,7 @@ Disruptor 还支持一种多个线程共同消费event的模式。相关的类�
 
 &nbsp;
 
-## WorkerPool
+##  5. <a name='WorkerPool'></a>WorkerPool
 
 ```
 Sequence workSequence = new Sequence(-1);
@@ -346,7 +360,7 @@ WorkerPool 内部维护了一个workSequence，代表着整个pool分配出去�
 
 &nbsp;
 
-### WorkProcessor
+###  5.1. <a name='WorkProcessor'></a>WorkProcessor
 
 WorkProcessor 是基本的消费者线程，它保有workSequence的引用。
 
