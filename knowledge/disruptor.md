@@ -1,7 +1,6 @@
 # Disruptor 源码解读 
 
-
-本文适合对Disruptor框架和源码有初步了解的读者。
+本文对 Disruptor 的运行机制在源码级别上做出解读, 适合对 Disruptor 框架和源码有初步了解的读者。
 
 &nbsp;
 
@@ -36,7 +35,7 @@ Disruptor 框架中的核心数据结构，event的容器。内部实现是
 Object[] entries;
 ```
 
-创建RingBuffer的时候要给出一个bufferSize，必须是2的次方（数据访问优化）。
+创建RingBuffer的时候要给出一个bufferSize，必须是2的次方（数据访问优化，bit mask）。
 
 但实际上在内部会给这个数组开出的实际空间是 bufferSize + 2*BUFFER_PAD，在我的电脑上这个PAD是32，所以最后的数组其实是这样的
 
@@ -271,11 +270,17 @@ public long getHighestPublishedSequence(long lowerBound, long availableSequence)
 
 单生产者的版本:
 ```
-    public long getHighestPublishedSequence(long lowerBound, long availableSequence)
-    {
-        return availableSequence;
-    }
+public long getHighestPublishedSequence(long lowerBound, long availableSequence)
+{
+    return availableSequence;
+}
 ```
+
+&nbsp;
+
+以上就是2种生产者的介绍。
+
+为了最佳的系统性能，如果业务允许的话最好遵守 [Single Writer Principle](https://mechanical-sympathy.blogspot.co.nz/2011/09/single-writer-principle.html)， 采用SingleProducer。在官方的[测试](https://lmax-exchange.github.io/disruptor/user-guide/index.html#_getting_started)中，SingleProducer的吞吐量大概是MultipleProducer的2-3倍。
 
 &nbsp;
 
@@ -317,21 +322,108 @@ ProcessingSequenceBarrier 内部持有Sequencer的cursor引用，知道生产者
 
 Sequencer在构造的时候就会传入一个 waitStrategy，sequenceBarrier 是由 Sequencer 创建的，创建的时候把 Sequencer 的 waitStrategy 传递给 sequenceBarrier。Sequencer和SequenceBarrier持有同样的waitStrategy，相当于在两者间起到了 ***传递信息和回调*** 的作用。
 
+消费者在没有可消费的event时会调用waitStrategy.waitFor陷入等待，生产者会在生产出新event后调用waitStrategy.signalAllWhenBlocking来唤醒消费者。
+
 &nbsp;
 
-当消费者调用 sequenceBarrier.waitFor(nextSequence) 时因为没有新event，方法会被 waitStrategy 调用
+不同的 WaitStrategy 的实现会有不同的效率和性能。
+
+#### BlockingWaitStrategy
+
+该实现依赖Lock来设置等待和唤醒。 系统吞吐量和低延迟的表现比较差，好处是对CPU的消耗比较少。
+
+```
+Lock lock = new ReentrantLock();
+Condition processorNotifyCondition = lock.newCondition();
+```
+
 ```
 processorNotifyCondition.await();
+
+等待
 ```
-来停止。
+
+```
+processorNotifyCondition.signalAll();
+
+唤醒
+```
+&nbsp;
+#### SleepingWaitStrategy
+
+该实现是在性能和CPU占用之间的一种折中。
+
+```
+inal int DEFAULT_RETRIES = 200;
+long DEFAULT_SLEEP = 100;
+
+int retries;
+long sleepTimeNs;
+```
+
+
+```
+if (counter > 100)
+{
+    --counter;
+}
+else if (counter > 0)
+{
+    --counter;
+    Thread.yield();
+}
+else
+{
+    LockSupport.parkNanos(sleepTimeNs);
+}
+
+等待的实现，上面的counter就是retries。
+```
+
+该实现对负责调用唤醒方法的生产者比较友好，因为啥都不用做。相当于完全依赖消费者端的自旋retry。
+```
+public void signalAllWhenBlocking()
+{
+}
+```
 
 &nbsp;
 
-这时如果生产者调用Sequencer.publish 会调用 waitStrategy.signalAllWhenBlocking 然后间接调用
+#### YieldingWaitStrategy
+
+该实现和SleepingWaitStrategy很类似，只是它在等待的时候会吃掉100%的CPU。
 ```
-processorNotifyCondition.signalAll();
+if (0 == counter)
+{
+    Thread.yield();
+}
+else
+{
+    --counter;
+}
+
+等待的实现， 只有 counter==0 的时候才让出CPU，其他时候都在自旋。
 ```
-从而唤醒 sequenceBarrier.waitFor 方法继续执行，看有没有新event可以用。有的话就可以继续消费。没有就再次陷入等待。
+和SleepingWaitStrategy一样，唤醒的时候啥都不用做。
+```
+public void signalAllWhenBlocking()
+{
+}
+```
+
+&nbsp;
+
+#### BusySpinWaitStrategy
+
+该实现的唤醒也是啥都不做。性能最好的实现，但对部署环境的要求也最高。消费者线程数应该要少于CPU的实际物理核心数。
+```
+ThreadHints.onSpinWait();
+
+等待的实现。
+```
+
+
+&nbsp;
 
 &nbsp;
 
@@ -405,6 +497,29 @@ while (true)
     }
     // exception handler
 }
+```
+
+
+## 一些思考
+
+从Disruptor的实现可以看到因为采用环形数据结构，它会覆盖老数据，生产新数据必须等到老数据都被消费后，生产速度和消费速度是紧耦合的，一旦消费者们中有一个人慢了一点、卡顿、异常，会影响整个系统的生产以至消费。
+
+唯一可以缓冲的就是Buffer，即数组长度bufferSize。
+
+比如，官方文档就建议生产event的时候使用 EventTranslator API。因为外层有 try finally 兜底。
+
+```
+    private void translateAndPublish(EventTranslator<E> translator, long sequence)
+    {
+        try
+        {
+            translator.translateTo(get(sequence), sequence);
+        }
+        finally
+        {
+            sequencer.publish(sequence);
+        }
+    }
 ```
 
 转载请注明来源 https://github.com/lich0079
