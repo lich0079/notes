@@ -6,7 +6,7 @@
 
 Disruptor版本 [3.4.3](https://github.com/LMAX-Exchange/disruptor/tree/3.4.3)
 
-转载请注明来源 https://github.com/lich0079
+转载请注明来源 https://github.com/lich0079/notes/blob/master/knowledge/disruptor.md
 &nbsp;
 
 <img src="img/Disruptor.png?raw=true"  width="900">
@@ -37,7 +37,7 @@ Object[] entries;
 
 创建RingBuffer的时候要给出一个bufferSize，必须是2的次方（数据访问优化，bit mask）。
 
-但实际上在内部会给这个数组开出的实际空间是 bufferSize + 2*BUFFER_PAD，在我的电脑上这个PAD是32，所以最后的数组其实是这样的
+但实际上在内部会给这个数组开出的空间是 bufferSize + 2*BUFFER_PAD，在我的电脑上这个PAD是32，所以最后的数组其实是这样的
 
 ```
 entries=[null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null]
@@ -522,4 +522,113 @@ while (true)
     }
 ```
 
-转载请注明来源 https://github.com/lich0079
+
+&nbsp;
+
+## 2021.6 更新
+
+*定义Event model的时候可以加个long seq 字段，把当时disruptor分配的sequence记住，方便以后debug*
+
+
+&nbsp;
+
+## Exception Handle
+
+&nbsp;
+
+### Producer
+
+如果可能在生产的时候出异常，必须在publishEvent 方法外面包一层 try catch, 否则会导致程序崩坏
+
+
+```
+// translateTo 方法中会出异常
+public static EventTranslatorTwoArg<StubEvent, String, Integer> eventTranslator = new EventTranslatorTwoArg<StubEvent, String, Integer>() {
+ 
+    @Override
+    public void translateTo(StubEvent event, long sequence, String arg0, Integer arg1) {
+        event.setSeq(sequence);
+        if (sequence % 3 == 0) {
+            throw new RuntimeException("translateTo exception," + arg0 + ",arg1=" + arg1 + ",seq=" + sequence);
+        }
+        event.setMsg(arg0);
+        event.setValue(arg1);
+    }
+};
+ 
+ 
+ 
+//  publishEvent 需要 try catch
+for (long i = 0; i < count ; i++) {
+    try {
+        disruptor.publishEvent(StubEvent.eventTranslator, "msg " + i, r.nextInt(100));
+    } catch (Exception e) {
+        log.error("publishEvent exception", e);
+    }
+}
+
+```
+
+有一点需要注意的是 如果在生产的时候出了异常，导致event 属性的填充出了问题，你又没有clean 之前的属性的话， 因为是环形数据结构，消费者有可能消费上一次的属性。
+
+```
+比如 下面的log中， seq 6 的 event 在生产阶段出错了，消费阶段消费的是上一次的属性值
+
+
+
+java.lang.RuntimeException: translateTo exception,msg 6,value=2,seq=6    // 生产时  seq 6 的event, value 是 2
+
+
+
+journal StubEvent(value=84, msg=msg 2, seq=6)      // 消费seq 6的时候，  value 是 84， 其实是上一次的
+```
+
+所以最好在event上设置一个flag（比如： produceCompleted），放在 translateTo 方法的最后一行执行。 这样消费者可以在消费的时候检查这个flag，防止误把以前的event消费2次。 
+
+
+```
+// 生产者在开始生产的时候需要先把flag 设为false， 在最后一行设为true
+@Override
+public void translateTo(StubEvent event, long sequence, String arg0, Integer arg1) {
+    event.setProduceCompleted(false);
+    event.setSeq(sequence);
+ 
+    if (sequence % 3 == 0) {
+        throw new RuntimeException("translateTo exception, arg0=" + arg0 + ",arg1=" + arg1 + ",seq=" + sequence);
+    }
+ 
+    event.setMsg(arg0);
+    event.setValue(arg1);
+ 
+    event.setProduceCompleted(true);
+}
+```
+
+&nbsp;
+
+### Consumer
+
+在消费端，可通过  
+```
+disruptor.setDefaultExceptionHandler
+```
+方法设定异常处理， 如果没调用过这个方法的话，默认实现是  FatalExceptionHandler, log并抛出异常， 会导致整个disruptor崩坏。
+```
+private ExceptionHandler<? super T> getExceptionHandler()
+{
+    ExceptionHandler<? super T> handler = exceptionHandler;
+    if (handler == null)
+    {
+        return ExceptionHandlers.defaultHandler();
+    }
+    return handler;
+}
+```
+
+框架提供了一个 **IgnoreExceptionHandler**  只会输出log， 不会抛出。建议采用或自己实现。
+
+&nbsp;
+
+&nbsp;
+
+转载请注明来源 https://github.com/lich0079/notes/blob/master/knowledge/disruptor.md

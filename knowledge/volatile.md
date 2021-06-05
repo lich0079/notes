@@ -106,3 +106,10 @@ public class Sequence extends RhsPadding
 }
 
 ```
+
+
+# 性能比较
+
+在 long 自增的测试场景中， 
+
+non-volatile long > volatile long use lasyset(Sequence.set) > Sequence.setVolatile == volatile long with padding > volatile long without padding
